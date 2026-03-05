@@ -10,11 +10,12 @@ import {
   Facebook,
   Linkedin,
   Twitter,
-  Sparkles,
   CheckCircle2,
   Hash,
   Search,
   Shield,
+  Loader2,
+  Download,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -38,9 +39,16 @@ const platformColors: Record<string, string> = {
 interface ContentCalendarProps {
   data: ContentCalendarData;
   onGenerateGraphic: (post: ContentPost) => void;
+  generatingGraphics?: Set<string>;
+  graphicUrls?: Record<string, string>;
 }
 
-export const ContentCalendar = ({ data, onGenerateGraphic }: ContentCalendarProps) => {
+export const ContentCalendar = ({
+  data,
+  onGenerateGraphic,
+  generatingGraphics = new Set(),
+  graphicUrls = {},
+}: ContentCalendarProps) => {
   const [expandedWeeks, setExpandedWeeks] = useState<Set<number>>(new Set([1]));
 
   const toggleWeek = (weekNumber: number) => {
@@ -77,7 +85,6 @@ export const ContentCalendar = ({ data, onGenerateGraphic }: ContentCalendarProp
             transition={{ delay: week.weekNumber * 0.1 }}
             className="bg-card border border-border rounded-xl overflow-hidden shadow-sm"
           >
-            {/* Week header */}
             <button
               onClick={() => toggleWeek(week.weekNumber)}
               className="w-full flex items-center justify-between p-4 hover:bg-accent/50 transition-colors"
@@ -103,7 +110,6 @@ export const ContentCalendar = ({ data, onGenerateGraphic }: ContentCalendarProp
               )}
             </button>
 
-            {/* Posts */}
             <AnimatePresence>
               {expandedWeeks.has(week.weekNumber) && (
                 <motion.div
@@ -119,6 +125,8 @@ export const ContentCalendar = ({ data, onGenerateGraphic }: ContentCalendarProp
                         key={post.id}
                         post={post}
                         onGenerateGraphic={() => onGenerateGraphic(post)}
+                        isGenerating={generatingGraphics.has(post.id)}
+                        graphicUrl={graphicUrls[post.id]}
                       />
                     ))}
                   </div>
@@ -135,9 +143,13 @@ export const ContentCalendar = ({ data, onGenerateGraphic }: ContentCalendarProp
 const PostCard = ({
   post,
   onGenerateGraphic,
+  isGenerating,
+  graphicUrl,
 }: {
   post: ContentPost;
   onGenerateGraphic: () => void;
+  isGenerating?: boolean;
+  graphicUrl?: string;
 }) => {
   const PlatformIcon = platformIcons[post.platform] || Instagram;
 
@@ -146,7 +158,6 @@ const PostCard = ({
       layout
       className="border border-border rounded-lg p-4 bg-background hover:shadow-md transition-shadow"
     >
-      {/* Top row */}
       <div className="flex items-start justify-between gap-3">
         <div className="flex-1">
           <div className="flex items-center gap-2 mb-2">
@@ -173,6 +184,7 @@ const PostCard = ({
         <Button
           size="sm"
           onClick={onGenerateGraphic}
+          disabled={isGenerating}
           className={cn(
             "flex-shrink-0 gap-1.5 text-xs",
             post.graphicGenerated
@@ -181,7 +193,12 @@ const PostCard = ({
           )}
           variant={post.graphicGenerated ? "outline" : "default"}
         >
-          {post.graphicGenerated ? (
+          {isGenerating ? (
+            <>
+              <Loader2 className="w-3.5 h-3.5 animate-spin" />
+              Generating...
+            </>
+          ) : post.graphicGenerated ? (
             <>
               <CheckCircle2 className="w-3.5 h-3.5" />
               Generated
@@ -195,7 +212,31 @@ const PostCard = ({
         </Button>
       </div>
 
-      {/* Bottom details */}
+      {/* Generated graphic preview */}
+      {graphicUrl && (
+        <motion.div
+          initial={{ opacity: 0, height: 0 }}
+          animate={{ opacity: 1, height: "auto" }}
+          className="mt-3 pt-3 border-t border-border"
+        >
+          <div className="relative rounded-lg overflow-hidden bg-muted">
+            <img
+              src={graphicUrl}
+              alt={`Generated graphic for ${post.title}`}
+              className="w-full max-h-64 object-cover rounded-lg"
+            />
+            <a
+              href={graphicUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="absolute bottom-2 right-2 bg-background/80 backdrop-blur-sm rounded-md p-1.5 hover:bg-background transition-colors"
+            >
+              <Download className="w-4 h-4 text-foreground" />
+            </a>
+          </div>
+        </motion.div>
+      )}
+
       <div className="mt-3 pt-3 border-t border-border flex flex-wrap gap-3 text-xs">
         <div className="flex items-center gap-1 text-muted-foreground">
           <Hash className="w-3 h-3" />
