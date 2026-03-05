@@ -2,23 +2,31 @@ import { useState } from "react";
 import { AppLayout } from "@/components/AppLayout";
 import { DomainInput } from "@/components/DomainInput";
 import { AdCampaignView } from "@/components/AdCampaignView";
+import { generateAdsWithAI } from "@/lib/aiService";
 import { generateAdCampaign, type AdCampaign } from "@/lib/contentGenerator";
 import { toast } from "sonner";
 import { motion } from "framer-motion";
 import { Target } from "lucide-react";
+import { Button } from "@/components/ui/button";
 
 const AdsPage = () => {
   const [campaign, setCampaign] = useState<AdCampaign | null>(null);
   const [isLoading, setIsLoading] = useState(false);
 
-  const handleGenerate = (domain: string) => {
+  const handleGenerate = async (domain: string) => {
     setIsLoading(true);
-    setTimeout(() => {
+    try {
+      const data = await generateAdsWithAI(domain);
+      setCampaign(data);
+      toast.success(`AI-powered ad campaign generated for ${domain}!`);
+    } catch (err: any) {
+      console.error("AI ads generation failed, using templates:", err);
+      toast.error(err.message || "AI generation failed. Using smart templates.");
       const data = generateAdCampaign(domain);
       setCampaign(data);
+    } finally {
       setIsLoading(false);
-      toast.success(`Ad campaign generated for ${domain}!`);
-    }, 1500);
+    }
   };
 
   return (
@@ -35,13 +43,26 @@ const AdsPage = () => {
             </div>
             <h1 className="text-3xl font-bold text-foreground mb-2">Google Ads Campaign Generator</h1>
             <p className="text-muted-foreground max-w-lg mx-auto mb-8">
-              Create high-converting Google ad campaigns with ready-to-publish concepts, targeting, keywords, budgets, and more.
+              Create high-converting Google ad campaigns powered by OpenAI GPT-4o with ready-to-publish concepts, targeting, keywords, budgets, and more.
             </p>
             <DomainInput onSubmit={handleGenerate} isLoading={isLoading} />
           </motion.div>
         )}
 
-        {campaign && <AdCampaignView campaign={campaign} />}
+        {campaign && (
+          <>
+            <div className="flex justify-end">
+              <Button
+                variant="outline"
+                onClick={() => setCampaign(null)}
+                className="text-sm"
+              >
+                ← Generate New Campaign
+              </Button>
+            </div>
+            <AdCampaignView campaign={campaign} />
+          </>
+        )}
       </div>
     </AppLayout>
   );
