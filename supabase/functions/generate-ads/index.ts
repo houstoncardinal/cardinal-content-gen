@@ -5,6 +5,62 @@ const corsHeaders = {
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version",
 };
 
+async function scrapeWebsite(domain: string): Promise<string> {
+  const urls = [`https://${domain}`, `https://www.${domain}`];
+
+  for (const url of urls) {
+    try {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 12000);
+      const res = await fetch(url, {
+        headers: {
+          "User-Agent": "Mozilla/5.0 (compatible; CardinalGenAI/1.0)",
+          "Accept": "text/html,application/xhtml+xml",
+        },
+        signal: controller.signal,
+        redirect: "follow",
+      });
+      clearTimeout(timeout);
+      if (!res.ok) continue;
+
+      const html = await res.text();
+      const cleaned = html
+        .replace(/<script[\s\S]*?<\/script>/gi, "")
+        .replace(/<style[\s\S]*?<\/style>/gi, "")
+        .replace(/<svg[\s\S]*?<\/svg>/gi, "");
+
+      const metaDesc = html.match(/<meta[^>]*name=["']description["'][^>]*content=["']([^"']+)["']/i)?.[1] || "";
+      const pageTitle = html.match(/<title[^>]*>([^<]+)<\/title>/i)?.[1] || "";
+      const ogSiteName = html.match(/<meta[^>]*property=["']og:site_name["'][^>]*content=["']([^"']+)["']/i)?.[1] || "";
+
+      const textContent = cleaned.replace(/<[^>]+>/g, " ").replace(/&[a-zA-Z]+;/g, " ").replace(/\s+/g, " ").trim().slice(0, 5000);
+      const headings = [...html.matchAll(/<h[1-3][^>]*>([^<]+)<\/h[1-3]>/gi)].map(m => m[1].trim()).filter(h => h.length > 2).slice(0, 20);
+
+      const hasPricing = /pric(e|ing)|plan|subscription|\$\d/i.test(html);
+      const hasProducts = /product|shop|cart|buy now|store/i.test(html);
+      const hasServices = /service|solution|consulting|agency|we help/i.test(html);
+
+      const signals = [];
+      if (hasPricing) signals.push("HAS_PRICING");
+      if (hasProducts) signals.push("SELLS_PRODUCTS");
+      if (hasServices) signals.push("OFFERS_SERVICES");
+
+      return `
+=== WEBSITE ANALYSIS: ${domain} ===
+TITLE: ${pageTitle}
+SITE NAME: ${ogSiteName}
+DESCRIPTION: ${metaDesc}
+SIGNALS: ${signals.join(", ") || "GENERAL"}
+HEADINGS: ${headings.join(" | ")}
+CONTENT: ${textContent.slice(0, 4000)}
+=== END ===`;
+    } catch (e) {
+      console.log(`Failed to fetch ${url}:`, e instanceof Error ? e.message : e);
+    }
+  }
+  return `Could not scrape ${domain}. Infer from domain name only.`;
+}
+
 serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
 
@@ -23,50 +79,64 @@ serve(async (req) => {
       });
     }
 
-    const systemPrompt = `You are a world-class Google Ads strategist who creates high-converting ad campaigns. Generate a comprehensive, ready-to-publish Google Ads campaign.
+    const cleanDomain = domain.replace(/^(https?:\/\/)?(www\.)?/, "").replace(/\/+$/, "");
+    console.log(`Scraping for ads: ${cleanDomain}`);
+    const websiteAnalysis = await scrapeWebsite(cleanDomain);
+    console.log(`Analysis complete: ${websiteAnalysis.length} chars`);
+
+    const systemPrompt = `You are a world-class Google Ads strategist. You have been given a DEEP ANALYSIS of a company's actual website. Use this to create a hyper-targeted, high-converting Google Ads campaign.
+
+CRITICAL: Use the website analysis to understand:
+1. Their EXACT products/services (reference them specifically in ad copy)
+2. Their pricing model and price points
+3. Their target market and audience
+4. Their competitive advantages and USPs
+5. Industry-specific keywords they actually use
+6. Their brand voice and messaging
 
 Return ONLY valid JSON (no markdown) with this structure:
 {
   "name": "Campaign Name",
-  "objective": "Campaign objective description",
+  "objective": "Campaign objective based on their actual business goals",
+  "companyInsight": "Brief summary of what the analysis revealed about this business",
   "adConcepts": [
     {
-      "headline1": "Max 30 chars",
+      "headline1": "Max 30 chars - reference their actual services",
       "headline2": "Max 30 chars",
       "headline3": "Max 30 chars",
-      "description1": "Max 90 chars compelling ad copy",
+      "description1": "Max 90 chars compelling ad copy using their actual value props",
       "description2": "Max 90 chars supporting copy",
-      "displayUrl": "domain.com/path",
+      "displayUrl": "domain.com/relevant-path",
       "finalUrl": "https://domain.com/landing",
       "callToAction": "CTA text"
     }
   ],
   "targeting": {
-    "locations": ["Country1", "Country2"],
-    "ageRange": "25-54",
-    "genderSplit": "All genders",
-    "interests": ["Interest1", "Interest2"],
-    "inMarketAudiences": ["Audience1", "Audience2"],
-    "customIntentKeywords": ["keyword1", "keyword2"],
-    "devices": ["Desktop (60%)", "Mobile (35%)", "Tablet (5%)"],
-    "schedule": "Mon-Fri 8AM-8PM"
+    "locations": ["Relevant locations based on their market"],
+    "ageRange": "Based on their audience",
+    "genderSplit": "Based on their audience",
+    "interests": ["Specific interests relevant to their niche"],
+    "inMarketAudiences": ["Specific in-market audiences"],
+    "customIntentKeywords": ["Based on their actual website keywords"],
+    "devices": ["Desktop (X%)", "Mobile (X%)", "Tablet (X%)"],
+    "schedule": "Optimal schedule for their business type"
   },
   "budget": {
-    "dailyBudget": "$50 - $150",
-    "monthlyBudget": "$1,500 - $4,500",
-    "suggestedBid": "$2.50 - $8.00",
-    "estimatedCPC": "$3.50 avg",
-    "estimatedClicks": "430 - 1,290/month",
-    "estimatedImpressions": "15,000 - 45,000/month",
-    "estimatedConversionRate": "3.5% - 5.2%"
+    "dailyBudget": "$X - $X based on their industry CPC",
+    "monthlyBudget": "$X - $X",
+    "suggestedBid": "$X - $X",
+    "estimatedCPC": "$X avg for their industry",
+    "estimatedClicks": "X - X/month",
+    "estimatedImpressions": "X - X/month",
+    "estimatedConversionRate": "X% - X% (industry benchmark)"
   },
-  "keywords": ["keyword1", "keyword2"],
-  "negativeKeywords": ["negative1", "negative2"],
-  "adExtensions": ["Extension description 1"],
-  "qualityScoreFactors": ["Factor 1"]
+  "keywords": ["keywords from their actual website content"],
+  "negativeKeywords": ["negative keywords specific to their industry"],
+  "adExtensions": ["Extensions relevant to their business type"],
+  "qualityScoreFactors": ["Factors specific to their business"]
 }
 
-Generate 3-5 ad concepts. Include 15-20 keywords and 10-15 negative keywords. Be specific and data-driven.`;
+Generate 4-5 ad concepts. Include 20+ keywords from their actual site content and 15+ negative keywords. Be data-driven and industry-specific.`;
 
     const response = await fetch("https://api.openai.com/v1/chat/completions", {
       method: "POST",
@@ -78,10 +148,13 @@ Generate 3-5 ad concepts. Include 15-20 keywords and 10-15 negative keywords. Be
         model: "gpt-4o",
         messages: [
           { role: "system", content: systemPrompt },
-          { role: "user", content: `Create a comprehensive Google Ads campaign for: ${domain}. Analyze the domain to understand the business and create highly targeted, conversion-optimized ads.` },
+          {
+            role: "user",
+            content: `Here is the DEEP WEBSITE ANALYSIS:\n\n${websiteAnalysis}\n\nCreate a comprehensive, high-converting Google Ads campaign based on this company's actual offerings, messaging, and target market. Every ad concept should reference their real services and value propositions.`,
+          },
         ],
         temperature: 0.7,
-        max_tokens: 4000,
+        max_tokens: 5000,
       }),
     });
 
