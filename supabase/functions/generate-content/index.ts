@@ -5,6 +5,110 @@ const corsHeaders = {
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version",
 };
 
+async function scrapeWebsite(domain: string): Promise<string> {
+  const urls = [
+    `https://${domain}`,
+    `https://www.${domain}`,
+  ];
+
+  for (const url of urls) {
+    try {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 12000);
+      const res = await fetch(url, {
+        headers: {
+          "User-Agent": "Mozilla/5.0 (compatible; CardinalGenAI/1.0; +https://cardinalgenai.com)",
+          "Accept": "text/html,application/xhtml+xml",
+        },
+        signal: controller.signal,
+        redirect: "follow",
+      });
+      clearTimeout(timeout);
+
+      if (!res.ok) continue;
+      const html = await res.text();
+
+      // Extract meaningful text content
+      const cleaned = html
+        // Remove scripts, styles, SVGs
+        .replace(/<script[\s\S]*?<\/script>/gi, "")
+        .replace(/<style[\s\S]*?<\/style>/gi, "")
+        .replace(/<svg[\s\S]*?<\/svg>/gi, "")
+        .replace(/<nav[\s\S]*?<\/nav>/gi, "")
+        // Extract meta description
+        .replace(/.*/, "");
+
+      // Get meta description
+      const metaDesc = html.match(/<meta[^>]*name=["']description["'][^>]*content=["']([^"']+)["']/i)?.[1] || "";
+      // Get meta keywords
+      const metaKeywords = html.match(/<meta[^>]*name=["']keywords["'][^>]*content=["']([^"']+)["']/i)?.[1] || "";
+      // Get title
+      const pageTitle = html.match(/<title[^>]*>([^<]+)<\/title>/i)?.[1] || "";
+      // Get OG data
+      const ogType = html.match(/<meta[^>]*property=["']og:type["'][^>]*content=["']([^"']+)["']/i)?.[1] || "";
+      const ogSiteName = html.match(/<meta[^>]*property=["']og:site_name["'][^>]*content=["']([^"']+)["']/i)?.[1] || "";
+
+      // Extract all visible text
+      const textContent = cleaned
+        .replace(/<[^>]+>/g, " ")
+        .replace(/&[a-zA-Z]+;/g, " ")
+        .replace(/\s+/g, " ")
+        .trim()
+        .slice(0, 6000);
+
+      // Extract heading structure
+      const headings = [...html.matchAll(/<h[1-3][^>]*>([^<]+)<\/h[1-3]>/gi)]
+        .map(m => m[1].trim())
+        .filter(h => h.length > 2)
+        .slice(0, 20);
+
+      // Extract links text for nav/services
+      const linkTexts = [...html.matchAll(/<a[^>]*>([^<]{3,40})<\/a>/gi)]
+        .map(m => m[1].trim())
+        .filter((v, i, a) => a.indexOf(v) === i)
+        .slice(0, 30);
+
+      // Look for pricing signals
+      const hasPricing = /pric(e|ing)|plan|subscription|\$\d|€\d|£\d/i.test(html);
+      // Look for product signals
+      const hasProducts = /product|shop|cart|add to bag|buy now|store/i.test(html);
+      // Look for service signals
+      const hasServices = /service|solution|consulting|agency|we help|we provide/i.test(html);
+      // Look for healthcare signals
+      const isHealthcare = /health|medical|patient|clinic|doctor|therapy|wellness/i.test(html);
+      // Look for tech signals
+      const isTech = /software|saas|api|platform|app|cloud|data|ai|machine learning/i.test(html);
+      // Look for ecommerce
+      const isEcommerce = /shop|store|cart|checkout|product|catalog/i.test(html);
+
+      const businessSignals = [];
+      if (hasPricing) businessSignals.push("HAS_PRICING_PAGE");
+      if (hasProducts) businessSignals.push("SELLS_PRODUCTS");
+      if (hasServices) businessSignals.push("OFFERS_SERVICES");
+      if (isHealthcare) businessSignals.push("HEALTHCARE_INDUSTRY");
+      if (isTech) businessSignals.push("TECHNOLOGY_COMPANY");
+      if (isEcommerce) businessSignals.push("ECOMMERCE");
+
+      return `
+=== WEBSITE ANALYSIS FOR ${domain} ===
+PAGE TITLE: ${pageTitle}
+SITE NAME: ${ogSiteName}
+META DESCRIPTION: ${metaDesc}
+META KEYWORDS: ${metaKeywords}
+OG TYPE: ${ogType}
+BUSINESS SIGNALS: ${businessSignals.join(", ") || "GENERAL_BUSINESS"}
+KEY HEADINGS: ${headings.join(" | ")}
+NAVIGATION/LINKS: ${linkTexts.join(", ")}
+MAIN CONTENT (excerpt): ${textContent.slice(0, 4000)}
+=== END ANALYSIS ===`;
+    } catch (e) {
+      console.log(`Failed to fetch ${url}:`, e instanceof Error ? e.message : e);
+      continue;
+    }
+  }
+  return `Could not scrape ${domain}. Generate content based on domain name inference only.`;
+}
+
 serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
 
@@ -23,24 +127,53 @@ serve(async (req) => {
       });
     }
 
+    // Clean the domain
+    const cleanDomain = domain.replace(/^(https?:\/\/)?(www\.)?/, "").replace(/\/+$/, "");
+    console.log(`Scraping website: ${cleanDomain}`);
+
+    // Step 1: Scrape and analyze the website
+    const websiteAnalysis = await scrapeWebsite(cleanDomain);
+    console.log(`Website analysis complete. Length: ${websiteAnalysis.length} chars`);
+
     const today = new Date();
     const todayStr = today.toISOString().split("T")[0];
 
     const systemPrompt = `You are an elite social media strategist and content marketing expert. You create Google E-E-A-T compliant, SEO-optimized content calendars for businesses. Today's date is ${todayStr}.
 
+CRITICAL: You have been provided a DEEP ANALYSIS of the company's actual website. Use this to understand:
+1. What the company ACTUALLY does (not guesses)
+2. Their specific products, services, and offerings
+3. Their industry and niche
+4. Their pricing model (if visible)
+5. Whether they are B2B or B2C
+6. Their target audience
+7. Their brand voice and messaging style
+8. Key differentiators and value propositions
+
+Use ALL of this intelligence to create hyper-relevant, industry-specific content.
+
 RULES:
 - Generate exactly 30 days of content starting from today (${todayStr})
 - Skip Sundays for a lighter schedule
 - Each post must demonstrate E-E-A-T signals (Experience, Expertise, Authoritativeness, Trustworthiness)
-- Include SEO-optimized captions with strategic hashtags
+- Include SEO-optimized captions with strategic hashtags specific to THEIR industry
 - Vary platforms: instagram, facebook, linkedin, twitter
 - Vary content types: image, carousel, video, text
 - Make captions compelling, professional, and conversion-focused
+- Reference their ACTUAL services/products in posts - be specific
 - Include relevant industry hashtags and SEO keywords
 - Each post should have a unique angle and value proposition
+- Content should position the company as an authority in their specific niche
 
 Return ONLY valid JSON with this exact structure (no markdown, no code blocks):
 {
+  "companyAnalysis": {
+    "businessType": "e.g. SaaS, Healthcare, E-commerce, Agency",
+    "industry": "specific industry",
+    "targetAudience": "who they serve",
+    "keyServices": ["service1", "service2"],
+    "valueProposition": "their main value prop"
+  },
   "posts": [
     {
       "date": "YYYY-MM-DD",
@@ -48,7 +181,7 @@ Return ONLY valid JSON with this exact structure (no markdown, no code blocks):
       "platform": "instagram",
       "type": "image",
       "title": "Post Title",
-      "caption": "Full caption with emojis and call to action",
+      "caption": "Full caption with emojis and call to action referencing their actual services",
       "hashtags": ["#tag1", "#tag2", "#tag3", "#tag4"],
       "seoKeywords": ["keyword1", "keyword2", "keyword3"],
       "eeatSignal": "Experience: Description of signal"
@@ -66,7 +199,10 @@ Return ONLY valid JSON with this exact structure (no markdown, no code blocks):
         model: "gpt-4o",
         messages: [
           { role: "system", content: systemPrompt },
-          { role: "user", content: `Generate a 30-day content calendar for the company: ${domain}. Research the domain name to understand their industry and create highly relevant, powerful content that will drive engagement, build authority, and generate leads.` },
+          {
+            role: "user",
+            content: `Here is the DEEP WEBSITE ANALYSIS of the company "${cleanDomain}":\n\n${websiteAnalysis}\n\nBased on this thorough analysis of their actual website, generate a highly targeted 30-day content calendar that references their specific services, products, industry terminology, and target audience. Every post should feel like it was crafted by someone who deeply understands this specific business.`,
+          },
         ],
         temperature: 0.8,
         max_tokens: 8000,
@@ -95,7 +231,6 @@ Return ONLY valid JSON with this exact structure (no markdown, no code blocks):
       });
     }
 
-    // Parse the JSON from the response, handling potential markdown wrapping
     let parsed;
     try {
       const cleaned = content.replace(/```json\n?/g, "").replace(/```\n?/g, "").trim();
@@ -107,7 +242,12 @@ Return ONLY valid JSON with this exact structure (no markdown, no code blocks):
       });
     }
 
-    return new Response(JSON.stringify({ calendar: parsed, domain, generatedAt: todayStr }), {
+    return new Response(JSON.stringify({
+      calendar: parsed,
+      domain: cleanDomain,
+      generatedAt: todayStr,
+      companyAnalysis: parsed.companyAnalysis || null,
+    }), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
   } catch (e) {
